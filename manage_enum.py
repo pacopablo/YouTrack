@@ -25,7 +25,13 @@ PROG_DESC = """
 Add / Update / Remove items from an Enum Bundle
 """[1:]
 
+def main(args):
+    """ Add / Update / Remove items from the specified bundle
 
+    """
+
+
+    cnx = Connection(args.youtrack, username, password)
 def do_args(argv):
     """ Parse command line arguments
 
@@ -50,9 +56,19 @@ def do_args(argv):
     parser.add_argument('-p', '--password', default=None, help='Google Docs '
                         'password')
     args = parser.parse_args(argv)
+
+    # parse out the description data from the extra fields
+    args.desc_data = {}
+    for v in args.fields:
+        tokens = v.split('=')
+        args.desc_data.setdefault(tokens[0], '='.join(tokens[1:]))
+
+    # verify presence of login data
+
     return args
 
 
 if __name__ == '__main__':
     args = do_args(sys.argv[1:])
-    pass
+    rc = main(args)
+    sys.exit(rc)

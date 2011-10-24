@@ -18,3 +18,7 @@ def test_youtrack_host():
     assert('http://example.org' == args.youtrack)
     args = do_args(["--youtrack", "http://example.org", "bundle", "name"])
     assert('http://example.org' == args.youtrack)
+    args = do_args(["bundle", "name", "foo=bar", "baz=bonzo"])
+    print args.desc_data
+    assert(('bonzo' == args.desc_data['baz']) and
+           ('bar' == args.desc_data['foo']))
