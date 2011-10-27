@@ -7,31 +7,203 @@
 # you should have received as part of this distribution.
 #
 # Author: John Hampton <pacopablo@pacopablo.com>
+import getpass
+import gdata
 
 __author__ = 'John Hampton'
 
 # Std Library Imports
 import argparse
 import sys
+import getpass
+import os
+
 
 # Local Imports
 
 # Third Party Imports
 from youtrack import YouTrackObject
 from youtrack.connection import Connection
+import gdata.spreadsheet.service
+import gdata.docs.service
+
 
 VERSION = '1.0'
 PROG_DESC = """
 Add / Update / Remove items from an Enum Bundle
 """[1:]
+GOOGLE_DOCS_SOURCE_APP = 'asylumware-trouyack-manage_enum'
+SRC_TYPES = ['XLS', 'ODF', 'CSV', 'TAB', 'GOOGLE']
+
+class InvalidSrcType(Exception):
+    def __init__(self, src_type='Unknown'):
+        self.src_type = src_type
+
+class InvalidSrcPath(Exception):
+    def __init__(self, src_path=''):
+        self.src_path = src_path
+
+
+class EnumValueSrc(object):
+    """ Object representing the source of enum bundle value information.
+
+    Usage:
+
+    >>> src = EnumValueSrc(args)
+    >>> value_info_pairs = [info_pair for info_pair in src.get_values()]
+
+    """
+
+    def __init__(self, args):
+        """ Argparse Parser object containing as return by do_args().
+        """
+        self.name = args.name
+        self.desc_data = args.desc_data
+        self.gusername = args.gusername
+        self.gpassword = args.gpassword
+        self.google = None
+        self.src_type = self.set_src_type(args.srctype)
+        self.src = self.set_src_path(args.src)
+
+    def _google_login(self):
+        """ Log into Google Docs
+
+        TODO: Figure out what happens on failed login so that we can handle
+        it gracefully
+        """
+        self.google = gdata.spreadsheet.service.SpreadsheetsService()
+        self.google.email = self.gusername
+        self.google.password = self.gpassword
+        self.google.source = GOOGLE_DOCS_SOURCE_APP
+        self.google.ProgrammaticLogin()
+
+    def _empty(self):
+        """ Simply Raise a StopIteration.
+        """
+        print('calling _empty')
+        raise StopIteration
+
+    def _get_GOOGLE_values(self):
+        """ Retrieve values from Google doc.
+
+        Retrieves values from all worksheets.  Each worksheet must have a
+        'name' column.  Values in the 'name' column are used as the Enum
+        values.  The rest of the columns in the row are put into the
+        desc_data dictionary for use in the description.
+        """
+
+        def is_src(top_row):
+            """ Searches the row for a column labeled 'name', case-insensitive.
+
+            Return a dictionary containing the column label with the
+            associated column key.
+            """
+            col_keys = {}
+            for ckey, col in top_row.custom.items():
+                if col.text:
+                    if col.text.lower() == 'name':
+                        col_keys['name'] = ckey
+                    else:
+                        col_keys[col.text.lower()] = ckey
+                continue
+            if 'name' in col_keys:
+                return col_keys
+            return {}
+
+        def extract_values(r, col_keys):
+            name = r[col_keys['name']].text
+            desc_data = {}
+            del col_keys['name']
+            for k, v in col_keys.items():
+                desc_data[k] = r[v].text
+                continue
+            return (name, desc_data)
+
+        wsfeed = self.google.GetWorksheetsFeed(self.src)
+        print('worksheets: %d' % len(wsfeed.entry))
+        for worksheet in wsfeed.entry:
+            wskey = worksheet.id.text.rsplit('/', 1)[1]
+            rows = self.google.GetListFeed(self.src, wskey)
+            if (len(rows.entry) > 0):
+                print('more than one row')
+                col_keys = is_src(rows.entry[0])
+                print(col_keys)
+                if col_keys:
+                    for row in rows.entry[1:]:
+                        yield extract_values(row.custom, col_keys)
+                        continue
+            continue
+
+
+    def set_src_type(self, src_type):
+        """ Sets the source type.
+
+        Source type may be one of the strings found in SRC_TYPES. An
+        InvalidSrcType exception is raised if attempting to set a source not
+        found in SRC_TYPES.
+        """
+
+        if ((not isinstance(src_type, basestring)) or
+           (src_type.upper() not in SRC_TYPES)):
+            raise InvalidSrcType(str(src_type))
+        else:
+            return src_type.upper()
+
+
+    def set_src_path(self, src_path=None):
+        """ Sets the path to the source file.
+
+        src_path may be a path to a file or the name of a Google Doc.
+        If src_path is not found on the local file system, it will assume that
+        it is a Google Doc and attempt to access it.  If it can not access the
+        document, and InvalidSrcPath exception will be raised.
+        """
+        self.src = src_path
+        if ((self.src_type == 'GOOGLE') or
+            (not os.path.isfile(os.path.abspath(src_path)))):
+            self._google_login()
+            doc_query = gdata.docs.service.DocumentQuery()
+            doc_query['title'] = src_path
+            doc_query['title-exact'] = 'true'
+            sfeed = self.google.GetSpreadsheetsFeed(query=doc_query)
+            if len(sfeed.entry) < 1:
+                raise InvalidSrcPath(src_path)
+            else:
+                return sfeed.entry[0].id.text.rsplit('/', 1)[1]
+
+
+    def get_src_values(self):
+        """ Yield (name, {data}) tuples from whichever source specified.
+        """
+        if not self.src:
+            yield (self.name, self.desc_data)
+        else:
+            if self.src_type in SRC_TYPES:
+                method_name = '_get_' + self.src_type + '_values'
+                print(method_name)
+                f = getattr(self, method_name, self._empty)
+                yield f()
+
+
 
 def main(args):
     """ Add / Update / Remove items from the specified bundle
 
     """
 
+    cnx = Connection(args.youtrack, args.yusername, args.ypassword)
+    enum_bundle = cnx.getEnumBundle(args.bundle)
+    values = [v.element_name for v in enum_bundle.values]
+    enum_src = EnumValueSrc(args)
+    for name, desc_data in enum_src.get_src_values():
+        print('%s: %s' % (name, str(desc_data)))
 
-    cnx = Connection(args.youtrack, username, password)
+
+
+
+
+
+
 def do_args(argv):
     """ Parse command line arguments
 
@@ -50,11 +222,16 @@ def do_args(argv):
                         help='Path to a file or name of a Google Docs '
                              'document')
     parser.add_argument('-t', '--src-type', metavar='[XLS|ODF|CSV|TAB|GOOGLE]',
-                        default='GOOGLE', help='Type of source file.')
-    parser.add_argument('-u', '--username', default=None, help='Google Docs '
-                        'username')
-    parser.add_argument('-p', '--password', default=None, help='Google Docs '
-                        'password')
+                        dest='srctype', default='GOOGLE',
+                        help='Type of source file.')
+    parser.add_argument('-yu', '--youtrack-username', dest='yusername',
+                        default=None, help='YouTrack username')
+    parser.add_argument('-yp', '--youtrack-password', dest='ypassword',
+                        default=None, help='YouTrack password')
+    parser.add_argument('-gu', '--google-username', dest='gusername',
+                        default=None, help='Google Docs username')
+    parser.add_argument('-gp', '--google-password', dest='gpassword',
+                        default=None, help='Google Docs password')
     args = parser.parse_args(argv)
 
     # parse out the description data from the extra fields
@@ -63,7 +240,21 @@ def do_args(argv):
         tokens = v.split('=')
         args.desc_data.setdefault(tokens[0], '='.join(tokens[1:]))
 
-    # verify presence of login data
+    # verify presence of YouTrack login data
+    if not args.yusername:
+        args.yusername = raw_input("YouTrack Username: ")
+    if not args.ypassword:
+        args.ypassword = getpass.getpass("YouTrack Password: ")
+
+    # verify presence of Google login data if Google Docs is selected
+    if args.srctype.lower() == 'google':
+        if not args.gusername:
+            args.gusername = raw_input("Google Username: ")
+        if not args.gpassword:
+            args.gpassword = getpass.getpass('Google Password: ')
+
+    print(args.src)
+    print(args.srctype)
 
     return args
 
