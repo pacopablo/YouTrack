@@ -98,25 +98,18 @@ class EnumValueSrc(object):
             Return a dictionary containing the column label with the
             associated column key.
             """
-            col_keys = {}
-            for ckey, col in top_row.custom.items():
-                if col.text:
-                    if col.text.lower() == 'name':
-                        col_keys['name'] = ckey
-                    else:
-                        col_keys[col.text.lower()] = ckey
-                continue
+            col_keys = [k.lower() for k in top_row.keys()]
             if 'name' in col_keys:
                 return col_keys
-            return {}
+            return []
 
         def extract_values(r, col_keys):
-            name = r[col_keys['name']].text
+            name = r['name'].text
             desc_data = {}
-            del col_keys['name']
-            for k, v in col_keys.items():
-                desc_data[k] = r[v].text
+            for k in col_keys:
+                desc_data[k] = r[k].text
                 continue
+            del desc_data['name']
             return (name, desc_data)
 
         wsfeed = self.google.GetWorksheetsFeed(self.src)
