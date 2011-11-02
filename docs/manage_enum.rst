@@ -46,3 +46,12 @@ Create the value `42` in the `userid` bundle with a description of `Name: Joe`.
 ::
 
   $ manage_enum.py -y http://example.org/issues -d 'Name: %(username)' userid 42 username=Joe
+
+
+
+API
+-----
+
+.. module:: manage_enum
+.. autoclass:: EnumBundle
+   :members:

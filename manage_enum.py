@@ -22,7 +22,7 @@ import os
 # Local Imports
 
 # Third Party Imports
-from youtrack import YouTrackObject
+from youtrack import YouTrackObject, YouTrackException
 from youtrack.connection import Connection
 import gdata.spreadsheet.service
 import gdata.docs.service
@@ -37,11 +37,18 @@ SRC_TYPES = ['XLS', 'ODF', 'CSV', 'TAB', 'GOOGLE']
 
 class InvalidSrcType(Exception):
     def __init__(self, src_type='Unknown'):
+        Exception.__init__(self)
         self.src_type = src_type
+
 
 class InvalidSrcPath(Exception):
     def __init__(self, src_path=''):
+        Exception.__init__(self)
         self.src_path = src_path
+
+
+class BundleSyncError(Exception): pass
+
 
 
 class EnumValueSrc(object):
@@ -98,7 +105,7 @@ class EnumValueSrc(object):
             Return a dictionary containing the column label with the
             associated column key.
             """
-            col_keys = [k.lower() for k in top_row.keys()]
+            col_keys = [k.lower() for k in top_row.custom.keys()]
             if 'name' in col_keys:
                 return col_keys
             return []
@@ -113,12 +120,10 @@ class EnumValueSrc(object):
             return (name, desc_data)
 
         wsfeed = self.google.GetWorksheetsFeed(self.src)
-        print('worksheets: %d' % len(wsfeed.entry))
         for worksheet in wsfeed.entry:
             wskey = worksheet.id.text.rsplit('/', 1)[1]
             rows = self.google.GetListFeed(self.src, wskey)
             if (len(rows.entry) > 0):
-                print('more than one row')
                 col_keys = is_src(rows.entry[0])
                 print(col_keys)
                 if col_keys:
@@ -126,7 +131,6 @@ class EnumValueSrc(object):
                         yield extract_values(row.custom, col_keys)
                         continue
             continue
-
 
     def set_src_type(self, src_type):
         """ Sets the source type.
@@ -141,7 +145,6 @@ class EnumValueSrc(object):
             raise InvalidSrcType(str(src_type))
         else:
             return src_type.upper()
-
 
     def set_src_path(self, src_path=None):
         """ Sets the path to the source file.
@@ -164,7 +167,6 @@ class EnumValueSrc(object):
             else:
                 return sfeed.entry[0].id.text.rsplit('/', 1)[1]
 
-
     def get_src_values(self):
         """ Yield (name, {data}) tuples from whichever source specified.
         """
@@ -175,24 +177,85 @@ class EnumValueSrc(object):
                 method_name = '_get_' + self.src_type + '_values'
                 print(method_name)
                 f = getattr(self, method_name, self._empty)
-                yield f()
+                for v in f():
+                    yield v
 
+class EnumBundle(object):
+    """Dict-like object representing an EnumBundle from YouTrack.
 
+    :param str name: Name of the Enum Bundle in YouTrack
+    :param str url: URL of YouTrack installation
+    :param str username: Username to use when logging into YouTrack
+    :param str password: Password to use when logging into YouTrack
+    :param dcit proxy_info: (optional) Dictionary mapping protocol to the
+                             URL of the proxy.
+
+    Example usage:
+    --------------
+    >>> bundle = EnumBundle('EnumName', url='http://example.org/youtrack',
+                             username='user', password='password')
+    >>> bundle.name
+    'EnumName'
+    >>> bundle['value'] = 'value description'
+    >>> bundle['value']
+    'value description'
+    >>> bundle.save()
+
+    """
+
+    def __init__(self, name, url=None, username=None, password=None,
+                 proxy_info=None):
+        self.name = name
+        self.url = url
+        self.password = password
+        self.order = []
+        self.values = {}
+        self.synchronized = False
+        self.cnx_error_code = None
+        self.cnx_error_msg = ''
+        try:
+            self.cnx = Connection(url, username, password)
+            self._load_enum()
+            self.synchronized = True
+        except YouTrackException, e:
+            # Unable to log into YouTrack site
+            self.cnx_error_code = e.response.status_code
+            self.cnx_error_msg = e.response.msg
+        pass
+
+    def _load_enum(self):
+        enum_bundle = self.cnx.getEnumBundle(self.name)
+
+        pass
+
+    def save(self, force=False):
+        """ Save the EnumBundle to the corresponding bundle on the server
+        """
+        if (not self.synchronized) and (not force):
+            raise BundleSyncError
+        pass
 
 def main(args):
     """ Add / Update / Remove items from the specified bundle
 
     """
 
+    enum_dest = EnumValueDest
     cnx = Connection(args.youtrack, args.yusername, args.ypassword)
     enum_bundle = cnx.getEnumBundle(args.bundle)
-    values = [v.element_name for v in enum_bundle.values]
+    list_items = {}
+    for i in enum_bundle.values:
+        list_items[v.element_name] = v.description
     enum_src = EnumValueSrc(args)
     for name, desc_data in enum_src.get_src_values():
-        print('%s: %s' % (name, str(desc_data)))
+        desc = build_desc(args.desc, desc_data)
+        if name in list_items.keys():
+            if not (desc == list_items[name]):
+                pass
+            pass
+        else:
 
-
-
+            print('%s: %s' % (name, str(desc_data)))
 
 
 
@@ -202,6 +265,7 @@ def do_args(argv):
 
     Expects the command line minus the script name.  Generally sys.argv[1:]
     """
+
     parser = argparse.ArgumentParser(description=PROG_DESC, version=VERSION)
     parser.add_argument('bundle')
     parser.add_argument('name')
